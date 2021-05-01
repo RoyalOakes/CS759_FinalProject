@@ -1,6 +1,7 @@
 /* This file implements the functions present in primetest.h. */
 
-#include "primetest.h"
+#include "primetest.cuh"
+#include<iostream>
 
 #define MAX_THREADS 1024
 #define NUM_PRIMES 6542
@@ -21,13 +22,19 @@ unsigned int PRIMES[NUM_PRIMES] = {2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,5
  *
  * P:   The list of primes.
  */
-void primetest_naive_kernel(unsigned int *out, const unsigned int *in,
+__global__ void primetest_naive_kernel(unsigned int *out, const unsigned int *in,
                             const unsigned int n, const unsigned int *P) {
     // Thread index.
     int idx = threadIdx.x + (blockDim.x * blockIdx.x);
 
     // Set the output to one initially.
     out[idx] = 1;
+
+    // 1 and 0 are not prime
+    if (in[idx] == 0 || in[idx] == 1) {
+        out[idx] = 0;
+        return;
+    }
 
     // Check if the number is prime.
     if (idx < n) {
@@ -61,12 +68,49 @@ void primetest_naive(unsigned int *out, const unsigned int *in,
             cudaMemcpyHostToDevice);
     cudaMemcpy(dIn, in, n * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
-    // Run primality test.
+    // Determine the number of blocks needed.
+    int nBlocks = (n + MAX_THREADS - 1) / MAX_THREADS;
 
+    // Run primality test.
+    primetest_naive_kernel<<<nBlocks, MAX_THREADS>>> (dOut, dIn, n, dPRIMES);
     cudaDeviceSynchronize();
 
     // Copy memory back to host.
+    cudaMemcpy(out, dOut, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+    // Clean up memory.
     cudaFree(dPRIMES);
     cudaFree(dIn);
     cudaFree(dOut);
+}
+
+int main() {
+    // Variables.
+    unsigned int size = 5000;
+    unsigned int *test = new unsigned int[size];
+    unsigned int *out  = new unsigned int[size];
+
+    // Fill input with sequential numbers
+    for (unsigned int i = 0; i < size; i++) {
+        test[i] = i;
+    }
+
+    // Run prime test.
+    primetest_naive(out, test, size);
+
+    // Count the number of primes.
+    unsigned int count = 0;
+    for (unsigned int i = 0; i < size; i++) {
+        count += out[i];
+    }
+
+    // Print the number of primes for verification
+    std::printf("Num primes: %u\n", count);
+    std::printf("Vals: %u %u %u\n", test[0], test[1], test[2]);
+    std::printf("out: %u %u %u\n", out[0], out[1], out[2]);
+
+    delete(test);
+    delete(out);
+
+    return 0;
 }
