@@ -95,9 +95,13 @@ void primetest_naive(unsigned int *out, const unsigned int *in,
     cudaFree(dOut);
 }
 
-/* Helper function for Miller-Rabin primality test. Calculates (x^y) % p
+/* Helper function for Miller-Rabin primality test. Calculates (x^y) % p.
+ *
+ * x: Base value
+ * y: Exponent
+ * p: Modulus value
  */
-__device__ unsigned int modpow (unsigned int x, unsigned int y, int p) {
+__device__ unsigned int modpow(unsigned int x, unsigned int y, int p) {
     int ret = 1;
     x = x % p;
 
@@ -115,13 +119,102 @@ __device__ unsigned int modpow (unsigned int x, unsigned int y, int p) {
 /* Conducts the Miller-Rabin primality test on the input array. Each thread
  * will run the test k times. Each input value gets one thread.
  *
+ * out:  Output array. 1 if prime, 0 if composite.
+ * in:   Input array.
+ * n:    Number of elements for input array.
+ * k:    Accuracy parameter. Higher implies higher accuracy.
+ * seed: Seed for random number generation
  */
 __global__ void primetest_miller_kernel(unsigned int *out,
                                         const unsigned int *in,
                                         const unsigned int n,
-                                        const unsigned int k) {
+                                        const unsigned int k,
+                                        const unsigned int seed) {
+    // Initialize curand
+    curandState state;
+    curand_init(seed, threadIdx.x, 0, &state);
+
     // Index of number to be tested.
     int idx = threadIdx.x + (blockDim.x * blockIdx.x);
+
+    if (idx >= n) {
+        return;
+    }
+
+    unsigned int v = in[idx];
+
+    // Handle trivial cases.
+    if (v == 0 || v == 1 || v == 4) {
+        out[idx] = 0;
+        return;
+    }
+
+    if (v == 2 || v == 3) {
+        out[idx] = 1;
+        return;
+    }
+
+    // Determine value of d.
+    unsigned int d = v - 1;
+    while(d & 1 == 0) {
+        d = d>>1;
+    }
+
+    // Do the Miller-Rabin primality test k times.
+    for (unsigned int i = 0; i < k; i++) {
+        // Generate a random number a between 2 and n-2
+        unsigned int a = (unsigned int) (((v - 4) * curand_uniform(&state)) + 2.999999);
+
+        unsigned int x = modpow(a, d, v);
+
+        // If this happens, then v is not composite and the test should be done again.
+        if (x == 1 || x == v - 1)
+            continue;
+
+        // Repetedly square x until a case is reached or d equals v - 1.
+        while (d != v - 1) {
+            x = (x*x) % v;
+            d = d<<1;
+
+            if (x == v - 1) {
+                break;
+            }
+        }
+
+        if (x != v - 1) {
+            out[idx] = 0;
+            return;
+        }
+    }
+
+    // If v is not composite after k tests, it is likely prime.
+    out[idx] = 1;
+}
+
+void primetest_miller(unsigned int *out, const unsigned int *in,
+                      const unsigned int n, const unsigned int k,
+                      const unsigned int seed) {
+    // Allocate memory on the device.
+    unsigned int *dIn, *dOut;
+    cudaMalloc((void**) &dIn, n * sizeof(unsigned int));
+    cudaMalloc((void**) &dOut, n * sizeof(unsigned int));
+
+    // Transfer input array to device.
+    cudaMemcpy(dIn, in, n * sizeof(unsigned int), cudaMemcpyHostToDevice);
+
+    // Determine the number of blocks needed.
+    int nBlocks = (n + MAX_THREADS - 1) / MAX_THREADS;
+
+    // Run primality test.
+    primetest_miller_kernel<<<nBlocks, MAX_THREADS>>> (dOut, dIn, n, k, seed);
+    cudaDeviceSynchronize();
+
+    // Copy memory back to host.
+    cudaMemcpy(out, dOut, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+    // Clean up memory.
+    cudaFree(dIn);
+    cudaFree(dOut);
 }
 
 int main() {
@@ -130,6 +223,8 @@ int main() {
     unsigned int *test = new unsigned int[size];
     unsigned int *out  = new unsigned int[size];
     unsigned int tpn = 2;
+    unsigned int k = 1;
+    unsigned int seed = 0;
 
     // Fill input with sequential numbers
     for (unsigned int i = 0; i < size; i++) {
@@ -137,7 +232,7 @@ int main() {
     }
 
     // Run prime test.
-    primetest_naive(out, test, size, tpn);
+    primetest_miller(out, test, size, k, seed);
 
     // Count the number of primes.
     unsigned int count = 0;
@@ -147,8 +242,8 @@ int main() {
 
     // Print the number of primes for verification
     std::printf("Num primes: %u\n", count);
-    std::printf("Vals: %u %u %u %u %u %u \n", test[0], test[1], test[2], test[3], test[4], test[5]);
-    std::printf("out: %u %u %u %u %u %u\n", out[0], out[1], out[2], out[3], out[4], out[5]);
+    std::printf("Vals: %u %u %u %u %u %u \n", test[0], test[1], test[2], test[10], test[11], test[12]);
+    std::printf("out: %u %u %u %u %u %u\n", out[0], out[1], out[2], out[10], out[11], out[12]);
 
     delete(test);
     delete(out);

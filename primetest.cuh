@@ -11,14 +11,27 @@
  *
  * out: The output array. A value of one means the corresponding element in
  *      input is prime, zero means the corresponding element is not prime.
- *
  * in:  Array of input numbers.
- *
  * n:   The length of the input array.
- *
  * tpn: Number of threads per input.
  */
 void primetest_naive(unsigned int *out, const unsigned int *in,
                      const unsigned int n, const unsigned int tpn);
+
+/* This function implements the Miller-Rabin primality test on an array of
+ * integers and stores the result in an array. This is a probabilistic test.
+ *
+ * This function assumes that the out and in arrays are allocated on the host
+ * beforehand.
+ *
+ * out:  Output array. Value of 1 implies prime, 0 implies composite.
+ * in:   Input array.
+ * n:    Lenth of input and output arrays
+ * k:    Number of times the Miller-Rabin test will be done.
+ * seed: Seed for random number generator.
+ */
+void primetest_miller(unsigned int *out, const unsigned int *in,
+                      const unsigned int n, const unsigned int k,
+                      const unsigned int seed);
 
 #endif
