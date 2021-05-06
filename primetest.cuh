@@ -15,8 +15,10 @@
  * in:  Array of input numbers.
  *
  * n:   The length of the input array.
+ *
+ * tpn: Number of threads per input.
  */
 void primetest_naive(unsigned int *out, const unsigned int *in,
-                     const unsigned int n);
+                     const unsigned int n, const unsigned int tpn);
 
 #endif
