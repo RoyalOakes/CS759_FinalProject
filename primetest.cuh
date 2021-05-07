@@ -15,7 +15,7 @@
  * n:   The length of the input array.
  * tpn: Number of threads per input.
  */
-void primetest_naive(unsigned int *out, const unsigned int *in,
+float primetest_naive(unsigned int *out, const unsigned int *in,
                      const unsigned int n, const unsigned int tpn);
 
 /* This function implements the Miller-Rabin primality test on an array of
@@ -30,10 +30,9 @@ void primetest_naive(unsigned int *out, const unsigned int *in,
  * k:    Number of times the Miller-Rabin test will be done.
  * seed: Seed for random number generator.
  */
-void primetest_miller(unsigned int *out, const unsigned int *in,
+float primetest_miller(unsigned int *out, const unsigned int *in,
                       const unsigned int n, const unsigned int k,
-                      const unsigned int seed);
-
+                      const unsigned int seed, const unsigned int tpn);
 
 /* The naive prime factorization algorithm. Accepts an array of input values
  * and divides by primes. Because the number of prime factors may vary between
@@ -43,6 +42,6 @@ void primetest_miller(unsigned int *out, const unsigned int *in,
  * in:  Array of values to be factorized.
  * n:   Number of elements for input and output arrays.
  */
-void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n);
+float factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n);
 
 #endif

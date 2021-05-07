@@ -69,8 +69,8 @@ __global__ void primetest_naive_kernel(unsigned int *out, const unsigned int *in
  * to the host.
  *
  */
-void primetest_naive(unsigned int *out, const unsigned int *in,
-                     const unsigned int n, const unsigned int tpn) {
+float primetest_naive(unsigned int *out, const unsigned int *in,
+                      const unsigned int n, const unsigned int tpn) {
     // Allocate memory on the device.
     unsigned int *dPRIMES, *dIn, *dOut;
     cudaMalloc((void**) &dPRIMES, NUM_PRIMES * sizeof(unsigned int));
@@ -86,8 +86,19 @@ void primetest_naive(unsigned int *out, const unsigned int *in,
     int nBlocks = (n*tpn + MAX_THREADS - 1) / MAX_THREADS;
 
     // Run primality test.
+    cudaEvent_t start;
+    cudaEvent_t stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+
     primetest_naive_kernel<<<nBlocks, MAX_THREADS>>> (dOut, dIn, n, dPRIMES, tpn);
     cudaDeviceSynchronize();
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
 
     // Copy memory back to host.
     cudaMemcpy(out, dOut, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
@@ -96,6 +107,11 @@ void primetest_naive(unsigned int *out, const unsigned int *in,
     cudaFree(dPRIMES);
     cudaFree(dIn);
     cudaFree(dOut);
+
+    // Get the elapsed time in milliseconds and return it.
+    float ms;
+    cudaEventElapsedTime(&ms, start, stop);
+    return ms;
 }
 
 /* Helper function for Miller-Rabin primality test. Calculates (x^y) % p.
@@ -200,9 +216,9 @@ __global__ void primetest_miller_kernel(unsigned int *out,
     // If v is not composite after k tests, it is likely prime.
 }
 
-void primetest_miller(unsigned int *out, const unsigned int *in,
-                      const unsigned int n, const unsigned int k,
-                      const unsigned int seed, const unsigned int tpn) {
+float primetest_miller(unsigned int *out, const unsigned int *in,
+                       const unsigned int n, const unsigned int k,
+                       const unsigned int seed, const unsigned int tpn) {
     // Allocate memory on the device.
     unsigned int *dIn, *dOut;
     cudaMalloc((void**) &dIn, n * sizeof(unsigned int));
@@ -215,8 +231,18 @@ void primetest_miller(unsigned int *out, const unsigned int *in,
     int nBlocks = (n*tpn + MAX_THREADS - 1) / MAX_THREADS;
 
     // Run primality test.
+    cudaEvent_t start;
+    cudaEvent_t stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+
     primetest_miller_kernel<<<nBlocks, MAX_THREADS>>> (dOut, dIn, n, k, seed, tpn);
     cudaDeviceSynchronize();
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
 
     // Copy memory back to host.
     cudaMemcpy(out, dOut, n * sizeof(unsigned int), cudaMemcpyDeviceToHost);
@@ -224,6 +250,11 @@ void primetest_miller(unsigned int *out, const unsigned int *in,
     // Clean up memory.
     cudaFree(dIn);
     cudaFree(dOut);
+
+    // Get the elapsed time in milliseconds and return it.
+    float ms;
+    cudaEventElapsedTime(&ms, start, stop);
+    return ms;
 }
 
 /* Computes the prime factorization of a given input value. Threads 0-625 will
@@ -296,7 +327,7 @@ __global__ void factor_naive_kernel(unsigned int *out, unsigned int *fact,
  * in:  Array of values to be factorized.
  * n:   Number of elements for input and output arrays.
  */
-void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n) {
+float factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n) {
     const int nStreams = 4; // Number of CUDA streams to be used.
 
     // Create streams.
@@ -320,6 +351,13 @@ void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int
     cudaMemcpy(dPRIMES, PRIMES, NUM_PRIMES * sizeof(unsigned int),
             cudaMemcpyHostToDevice);
 
+    cudaEvent_t start;
+    cudaEvent_t stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+
     for (unsigned int i = 0; i < n; i++) {
         int s = i % nStreams;
 
@@ -336,6 +374,9 @@ void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int
 
     cudaDeviceSynchronize();
 
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
     // Clean up memory.
     for (int i = 0; i < nStreams; i++) {
         cudaFree(dOut[i]);
@@ -348,4 +389,9 @@ void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int
     for (int i = 0; i < nStreams; i++) {
         cudaStreamDestroy(stream[i]);
     }
+
+    // Get the elapsed time in milliseconds and return it.
+    float ms;
+    cudaEventElapsedTime(&ms, start, stop);
+    return ms;
 }
