@@ -34,4 +34,15 @@ void primetest_miller(unsigned int *out, const unsigned int *in,
                       const unsigned int n, const unsigned int k,
                       const unsigned int seed);
 
+
+/* The naive prime factorization algorithm. Accepts an array of input values
+ * and divides by primes. Because the number of prime factors may vary between
+ * inputs, this function allocates memory on the heap for the prime factors.
+ *
+ * out: Array for output.
+ * in:  Array of values to be factorized.
+ * n:   Number of elements for input and output arrays.
+ */
+void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n);
+
 #endif

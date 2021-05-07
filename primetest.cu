@@ -1,7 +1,6 @@
 /* This file implements the functions present in primetest.h. */
 
 #include "primetest.cuh"
-#include <iostream>
 #include <curand.h>
 #include <curand_kernel.h>
 
@@ -293,6 +292,9 @@ __global__ void factor_naive_kernel(unsigned int *out, unsigned int *fact,
  * and divides by primes. Because the number of prime factors may vary between
  * inputs, this function allocates memory on the heap for the prime factors.
  *
+ * out: Array for output.
+ * in:  Array of values to be factorized.
+ * n:   Number of elements for input and output arrays.
  */
 void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n) {
     const int nStreams = 4; // Number of CUDA streams to be used.
@@ -327,13 +329,9 @@ void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int
         // Copy memory to host.
         unsigned int nFact;
         cudaMemcpyAsync(&nFact, dnFact[s], sizeof(unsigned int), cudaMemcpyDeviceToHost, stream[s]);
-        if (nFact == 0) {
-            out[i] = NULL;
-        } else {
-            out[i] = new unsigned int[2*nFact+1];
-            out[i][0] = nFact;
-            cudaMemcpyAsync(&out[i][1], dOut[s], 2 * nFact * sizeof(unsigned int), cudaMemcpyDeviceToHost, stream[s]);
-        }
+        out[i] = new unsigned int[2*nFact+1];
+        out[i][0] = nFact;
+        cudaMemcpyAsync(&out[i][1], dOut[s], 2 * nFact * sizeof(unsigned int), cudaMemcpyDeviceToHost, stream[s]);
     }
 
     cudaDeviceSynchronize();
@@ -350,46 +348,4 @@ void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int
     for (int i = 0; i < nStreams; i++) {
         cudaStreamDestroy(stream[i]);
     }
-}
-
-int main() {
-    // Variables.
-    unsigned int size = 5000;
-    unsigned int test[1] = {10};
-    unsigned int **out;
-    unsigned int tpn = 2;
-    unsigned int k = 1;
-    unsigned int seed = 0;
-
-    /*
-    // Fill input with sequential numbers
-    for (unsigned int i = 0; i < size; i++) {
-        test[i] = i;
-    }
-    */
-
-    // Run factorization
-    factor_naive(out, test, 1);
-
-    /*
-    // Count the number of primes.
-    unsigned int count = 0;
-    for (unsigned int i = 0; i < size; i++) {
-        count += out[i];
-    }
-
-    // Print the number of primes for verification
-    std::printf("Num primes: %u\n", count);
-    std::printf("Vals: %u %u %u %u %u %u \n", test[0], test[1], test[2], test[10], test[11], test[12]);
-    std::printf("out: %u %u %u %u %u %u\n", out[0], out[1], out[2], out[10], out[11], out[12]);
-    */
-    std::printf("Value: %u\n", *test);
-    for (unsigned int i = 0; i < out[0][0]; i++) {
-        std::printf("%u, %u\n", out[0][i+1], out[0][i+2]);
-    }
-
-    //delete(test);
-    delete(out);
-
-    return 0;
 }
