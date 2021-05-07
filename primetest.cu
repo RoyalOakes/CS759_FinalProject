@@ -28,18 +28,20 @@ __global__ void primetest_naive_kernel(unsigned int *out, const unsigned int *in
     // Index of number that is being tested.
     int idx = (threadIdx.x + (blockDim.x * blockIdx.x)) / tpn;
 
-    // Set the output to one initially if not zero or 1.
+    // Set the output to one initially
     if (threadIdx.x % tpn == 0) {
-        // 1 and 0 are not prime
-        if (in[idx] == 0 || in[idx] == 1) {
-            out[idx] = 0;
-            return;
-        }
-
         out[idx] = 1;
     }
 
     __syncthreads();
+
+    unsigned int sqrtin = (unsigned int) (sqrt((double) in[idx]) + 1.0);
+
+    // 1 and 0 are not prime
+    if (in[idx] == 0 || in[idx] == 1) {
+        out[idx] = 0;
+        return;
+    }
 
     // Find start and end indicies
     unsigned int s = (NUM_PRIMES / tpn) * (threadIdx.x % tpn);
@@ -54,6 +56,8 @@ __global__ void primetest_naive_kernel(unsigned int *out, const unsigned int *in
                 return;
             } else if (in[idx] % P[i] == 0) { // Divisible by prime -> not prime
                 out[idx] = 0;
+                return;
+            } else if (P[i] > sqrtin) { // Only test primes <= sqrt(in[idx]).
                 return;
             }
         }
@@ -124,24 +128,31 @@ __device__ unsigned int modpow(unsigned int x, unsigned int y, int p) {
  * n:    Number of elements for input array.
  * k:    Accuracy parameter. Higher implies higher accuracy.
  * seed: Seed for random number generation
+ * tpn:  Threads per number.
  */
 __global__ void primetest_miller_kernel(unsigned int *out,
                                         const unsigned int *in,
                                         const unsigned int n,
                                         const unsigned int k,
-                                        const unsigned int seed) {
+                                        const unsigned int seed,
+                                        const unsigned int tpn) {
     // Initialize curand
     curandState state;
     curand_init(seed, threadIdx.x, 0, &state);
 
     // Index of number to be tested.
-    int idx = threadIdx.x + (blockDim.x * blockIdx.x);
+    int idx = (threadIdx.x + (blockDim.x * blockIdx.x)) / tpn;
 
     if (idx >= n) {
         return;
     }
 
     unsigned int v = in[idx];
+
+    // Set the output to one initially
+    if (threadIdx.x % tpn == 0) {
+        out[idx] = 1;
+    }
 
     // Handle trivial cases.
     if (v == 0 || v == 1 || v == 4) {
@@ -188,12 +199,11 @@ __global__ void primetest_miller_kernel(unsigned int *out,
     }
 
     // If v is not composite after k tests, it is likely prime.
-    out[idx] = 1;
 }
 
 void primetest_miller(unsigned int *out, const unsigned int *in,
                       const unsigned int n, const unsigned int k,
-                      const unsigned int seed) {
+                      const unsigned int seed, const unsigned int tpn) {
     // Allocate memory on the device.
     unsigned int *dIn, *dOut;
     cudaMalloc((void**) &dIn, n * sizeof(unsigned int));
@@ -203,10 +213,10 @@ void primetest_miller(unsigned int *out, const unsigned int *in,
     cudaMemcpy(dIn, in, n * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
     // Determine the number of blocks needed.
-    int nBlocks = (n + MAX_THREADS - 1) / MAX_THREADS;
+    int nBlocks = (n*tpn + MAX_THREADS - 1) / MAX_THREADS;
 
     // Run primality test.
-    primetest_miller_kernel<<<nBlocks, MAX_THREADS>>> (dOut, dIn, n, k, seed);
+    primetest_miller_kernel<<<nBlocks, MAX_THREADS>>> (dOut, dIn, n, k, seed, tpn);
     cudaDeviceSynchronize();
 
     // Copy memory back to host.
@@ -217,23 +227,151 @@ void primetest_miller(unsigned int *out, const unsigned int *in,
     cudaFree(dOut);
 }
 
+/* Computes the prime factorization of a given input value. Threads 0-625 will
+ * test 6 primes and threads 626-1023 will test 7 primes. This ensures all
+ * 6542 primes in PRIMES are tested while dividing the work. Once all threads
+ * finish, the 0 thread will organize the factors so they can be copied back to
+ * the host. This is designed to work with a single block.
+ *
+ * out:   The output buffer. Assumed to have length 13048.
+ * fact:  The array of factors. Assumed to be of length NUM_PRIMES.
+ * nfact: The number of factors with power greater than 0.
+ * in:    The input to be factored.
+ * P:     Array of prime numbers.
+ */
+__global__ void factor_naive_kernel(unsigned int *out, unsigned int *fact,
+                                    unsigned int *nfact, unsigned int in,
+                                    const unsigned int *P){
+    // Index of thread.
+    int idx = threadIdx.x;
+
+    // Determine which primes to test. e is non-inclusive.
+    int s, e;
+    if (idx < 626) {
+        s = 6 * idx;
+        e = s + 6;
+    } else {
+        s = 3756 + 7 * (idx - 626);
+        e = s + 7;
+    }
+
+    // Set fact values to zero;
+    for (unsigned int i = s; i < e; i++) {
+        fact[i] = 0;
+    }
+
+    // If our input is 1 or 0, then no work has to be done.
+    if (in == 0 || in == 1) {
+        if (idx == 0)
+            nfact = 0;
+        return;
+    }
+
+    // Factorize.
+    for (int i = s; i < e; i++) {
+        while (in % P[i] == 0) {
+            in /= P[i]; // divide by the prime to get a new value.
+            fact[i]++;  // increment the power of this prime factor.
+        }
+    }
+
+    // Organize data.
+    if (idx == 0) {
+        *nfact = 0;
+        int k = 0; // Open positon in output.
+        for (int i = 0; i < NUM_PRIMES; i++) {
+            if (fact[i] > 0) {
+                (*nfact)++;
+                out[k++] = P[i];
+                out[k++] = fact[i];
+            }
+        }
+    }
+}
+
+/* The naive prime factorization algorithm. Accepts an array of input values
+ * and divides by primes. Because the number of prime factors may vary between
+ * inputs, this function allocates memory on the heap for the prime factors.
+ *
+ */
+void factor_naive(unsigned int **out, const unsigned int *in, const unsigned int n) {
+    const int nStreams = 4; // Number of CUDA streams to be used.
+
+    // Create streams.
+    cudaStream_t stream[nStreams];
+    for (int i = 0; i < nStreams; i++) {
+        cudaStreamCreate(&stream[i]);
+    }
+
+    // Allocate memory on the device.
+    unsigned int *dPRIMES;
+    cudaMalloc((void**) &dPRIMES, NUM_PRIMES * sizeof(unsigned int));
+
+    unsigned int *dOut[nStreams], *dFact[nStreams], *dnFact[nStreams];
+    for (int i = 0; i < nStreams; i++) {
+        cudaMalloc((void**) &dOut[i], 2 * NUM_PRIMES * sizeof(unsigned int));
+        cudaMalloc((void**) &dFact[i], NUM_PRIMES * sizeof(unsigned int));
+        cudaMalloc((void**) &dnFact[i], sizeof(unsigned int));
+    }
+
+    // Transfer primes array to device.
+    cudaMemcpy(dPRIMES, PRIMES, NUM_PRIMES * sizeof(unsigned int),
+            cudaMemcpyHostToDevice);
+
+    for (unsigned int i = 0; i < n; i++) {
+        int s = i % nStreams;
+
+        // Run factorization.
+        factor_naive_kernel<<<1,MAX_THREADS,0,stream[s]>>>(dOut[s], dFact[s], dnFact[s], in[i], dPRIMES);
+
+        // Copy memory to host.
+        unsigned int nFact;
+        cudaMemcpyAsync(&nFact, dnFact[s], sizeof(unsigned int), cudaMemcpyDeviceToHost, stream[s]);
+        if (nFact == 0) {
+            out[i] = NULL;
+        } else {
+            out[i] = new unsigned int[2*nFact+1];
+            out[i][0] = nFact;
+            cudaMemcpyAsync(&out[i][1], dOut[s], 2 * nFact * sizeof(unsigned int), cudaMemcpyDeviceToHost, stream[s]);
+        }
+    }
+
+    cudaDeviceSynchronize();
+
+    // Clean up memory.
+    for (int i = 0; i < nStreams; i++) {
+        cudaFree(dOut[i]);
+        cudaFree(dFact[i]);
+        cudaFree(dnFact[i]);
+    }
+
+    cudaFree(dPRIMES);
+
+    for (int i = 0; i < nStreams; i++) {
+        cudaStreamDestroy(stream[i]);
+    }
+}
+
 int main() {
     // Variables.
     unsigned int size = 5000;
-    unsigned int *test = new unsigned int[size];
-    unsigned int *out  = new unsigned int[size];
+    unsigned int test[1] = {10};
+    unsigned int **out;
     unsigned int tpn = 2;
     unsigned int k = 1;
     unsigned int seed = 0;
 
+    /*
     // Fill input with sequential numbers
     for (unsigned int i = 0; i < size; i++) {
         test[i] = i;
     }
+    */
 
-    // Run prime test.
-    primetest_miller(out, test, size, k, seed);
+    // Run factorization
+    factor_naive(out, test, 1);
 
+    /*
     // Count the number of primes.
     unsigned int count = 0;
     for (unsigned int i = 0; i < size; i++) {
@@ -244,8 +382,13 @@ int main() {
     std::printf("Num primes: %u\n", count);
     std::printf("Vals: %u %u %u %u %u %u \n", test[0], test[1], test[2], test[10], test[11], test[12]);
     std::printf("out: %u %u %u %u %u %u\n", out[0], out[1], out[2], out[10], out[11], out[12]);
+    */
+    std::printf("Value: %u\n", *test);
+    for (unsigned int i = 0; i < out[0][0]; i++) {
+        std::printf("%u, %u\n", out[0][i+1], out[0][i+2]);
+    }
 
-    delete(test);
+    //delete(test);
     delete(out);
 
     return 0;
